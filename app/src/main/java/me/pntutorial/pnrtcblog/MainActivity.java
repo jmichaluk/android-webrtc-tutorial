@@ -4,10 +4,20 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.View;
 import android.widget.EditText;
 import android.widget.TextView;
+import android.widget.Toast;
+
+import com.pubnub.api.Callback;
+import com.pubnub.api.Pubnub;
+import com.pubnub.api.PubnubException;
+
+import org.json.JSONException;
+import org.json.JSONObject;
 
 import me.pntutorial.pnrtcblog.util.Constants;
 
@@ -18,7 +28,7 @@ public class MainActivity extends Activity {
     private SharedPreferences mSharedPreferences;
     private TextView mUsernameTV;
     private EditText mCallNumET;
-    // private Pubnub mPubNub;
+    private Pubnub mPubNub;
     private String username;
 
     /**
@@ -32,7 +42,7 @@ public class MainActivity extends Activity {
 
         this.mSharedPreferences = getSharedPreferences(Constants.SHARED_PREFS, MODE_PRIVATE);
         // Return to Log In screen if no user is logged in.
-        if (!this.mSharedPreferences.contains(Constants.USER_NAME)){
+        if (!this.mSharedPreferences.contains(Constants.USER_NAME)) {
             Intent intent = new Intent(this, LoginActivity.class);
             startActivity(intent);
             finish();
@@ -40,13 +50,47 @@ public class MainActivity extends Activity {
         }
         this.username = this.mSharedPreferences.getString(Constants.USER_NAME, "");
 
-        this.mCallNumET  = (EditText) findViewById(R.id.call_num);
+        this.mCallNumET = (EditText) findViewById(R.id.call_num);
         this.mUsernameTV = (TextView) findViewById(R.id.main_username);
 
-        this.mUsernameTV.setText(this.username);  // Set the username to the username text view
+        this.mUsernameTV.setText(this.username); // Set the username to the username text view
 
-        //TODO: Create and instance of Pubnub and subscribe to standby channel
-        // In pubnub subscribe callback, send user to your VideoActivity
+        initPubNub();
+
+    }
+    //TODO: Create and instance of Pubnub and subscribe to standby channel
+    // In pubnub subscribe callback, send user to your VideoActivity
+    public void initPubNub() {
+        String stdbyChannel = this.username + Constants.STDBY_SUFFIX;
+        this.mPubNub = new Pubnub(Constants.PUB_KEY, Constants.SUB_KEY);
+        this.mPubNub.setUUID(this.username);
+        try {
+            this.mPubNub.subscribe(stdbyChannel, new Callback() {
+                @Override
+                public void successCallback(String channel, Object message) {
+                Log.d("MA-success", "MESSAGE: " + message.toString());
+
+                // ignore if not JSONObject
+                if (!(message instanceof JSONObject)) return;
+                JSONObject jsonMsg = (JSONObject) message;
+                try {
+                    if (!jsonMsg.has(Constants.JSON_CALL_USER)) return;
+                    String user = jsonMsg.getString(Constants.JSON_CALL_USER);
+
+                    // Consider Accept/Reject call here
+                    Intent intent = new Intent(MainActivity.this, VideoChatActivity.class);
+                    intent.putExtra(Constants.USER_NAME, username);
+                    intent.putExtra(Constants.JSON_CALL_USER, user);
+                    startActivity(intent);
+                } catch (JSONException e) {
+                    e.printStackTrace();
+                }
+            }
+        });
+
+        } catch (PubnubException e) {
+            e.printStackTrace();
+        }
     }
 
 
@@ -72,6 +116,39 @@ public class MainActivity extends Activity {
         }
         return super.onOptionsItemSelected(item);
     }
+
+    public void makeCall(View view) {
+        String callNum = mCallNumET.getText().toString();
+        if (callNum.isEmpty() || callNum.equals(this.username)) {
+            Toast.makeText(this, "Enter a valid number.", Toast.LENGTH_SHORT).show();
+        }
+        Log.d("Jordyn-Test", "make call pressed");
+        dispatchCall(callNum);
+    }
+
+    public void dispatchCall(final String callNum) {
+        final String callNumStdBy = callNum + Constants.STDBY_SUFFIX;
+        JSONObject jsonCall = new JSONObject();
+
+        try {
+            jsonCall.put(Constants.JSON_CALL_USER, this.username);
+            mPubNub.publish(callNumStdBy, jsonCall, new Callback() {
+                @Override
+                public void successCallback(String channel, Object message) {
+                    Log.d("MA-dCall", "SUCCESS: " + message.toString());
+                    Intent intent = new Intent(MainActivity.this, VideoChatActivity.class);
+                    intent.putExtra(Constants.USER_NAME, username);
+                    intent.putExtra(Constants.JSON_CALL_USER, callNum);
+                }
+            });
+
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+
+    }
+
+
 
     /**
      * Log out, remove username from SharedPreferences, unsubscribe from PubNub, and send user back
